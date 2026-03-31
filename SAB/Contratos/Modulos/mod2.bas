@@ -1,160 +1,246 @@
+' ========== mod2.bas  (ExportarMuestra) ==========
 Option Explicit
 
+' ============================================================
+'  ENTRADA DEL BOTÓN "Generar Tabla con las Muestras"
+'
+'  Flujo:
+'  1. Construye el universo filtrado por período y tipo (PN/PJ),
+'     ordenado igual que la tabla cargada (Fecha ASC, Transac ASC).
+'  2. Lee los números aleatorios desde Muestra1_PN / Muestra1_PJ.
+'  3. Exporta las filas que corresponden a esos números (posiciones
+'     dentro del universo filtrado) a hojas separadas.
+' ============================================================
 Public Sub ExportarMuestra()
     Dim wb As Workbook: Set wb = ThisWorkbook
-    Dim wsSrc As Worksheet
-    Dim tbl As ListObject
-    Dim cntPN As Long, cntPJ As Long
-    
-    On Error GoTo ErrHandler
-    Application.ScreenUpdating = False
-    
-    ' Hoja y tabla origen
-    Set wsSrc = wb.Worksheets("Contratos")
-    Set tbl = wsSrc.ListObjects("Contratos")
-    
-    If tbl Is Nothing Or tbl.DataBodyRange Is Nothing Then
-        MsgBox "No se encontró la tabla 'Contratos' o está vacía.", vbCritical
-        GoTo Salir
+
+    ' Validar que se hayan generado los números de muestra
+    Dim celdaPN As Range, celdaPJ As Range
+    On Error Resume Next
+    Set celdaPN = wb.Names("Muestra1_PN").RefersToRange
+    Set celdaPJ = wb.Names("Muestra1_PJ").RefersToRange
+    On Error GoTo 0
+
+    If celdaPN Is Nothing Or celdaPJ Is Nothing Then
+        MsgBox "No se encontraron los nombres definidos 'Muestra1_PN' / 'Muestra1_PJ'.", vbCritical
+        Exit Sub
     End If
-    
-    ' Leer tamaño de muestra
-    cntPN = wb.Names("TamañoMuestraPN").RefersToRange.Value
-    cntPJ = wb.Names("TamañoMuestraPJ").RefersToRange.Value
-    
-    ' Exportar muestras
-    ExportFiltered tbl, "N", "Muestra_Contratos_PN", cntPN
-    ExportFiltered tbl, "J", "Muestra_Contratos_PJ", cntPJ
-    
+    If IsEmpty(celdaPN.Value) Or Len(Trim$(CStr(celdaPN.Value))) = 0 Then
+        MsgBox "No se han generado los números de muestra." & vbCrLf & _
+               "Primero ejecute 'Seleccionar Muestras'.", vbExclamation, "Sin muestra"
+        Exit Sub
+    End If
+
+    ' Obtener tabla
+    Dim wsC As Worksheet
+    On Error Resume Next
+    Set wsC = wb.Worksheets("Contratos")
+    On Error GoTo 0
+    If wsC Is Nothing Then
+        MsgBox "No existe la hoja 'Contratos'.", vbCritical: Exit Sub
+    End If
+    Dim lo As ListObject
+    On Error Resume Next
+    Set lo = wsC.ListObjects("Contratos")
+    On Error GoTo 0
+    If lo Is Nothing Or lo.DataBodyRange Is Nothing Then
+        MsgBox "No se encontró la tabla 'Contratos' o está vacía.", vbCritical: Exit Sub
+    End If
+
+    ' Leer filtros del período
+    Dim tipoInforme As String, mesTexto As String
+    Dim anioFiltro As Long, mesFiltro As Long
+    On Error Resume Next
+    tipoInforme = UCase$(Trim$(CStr(wb.Names("TipoInforme").RefersToRange.Value)))
+    anioFiltro  = CLng(wb.Names("Año").RefersToRange.Value)
+    If tipoInforme = "MENSUAL" Then
+        mesTexto  = Trim$(CStr(wb.Names("Mes").RefersToRange.Value))
+        mesFiltro = MesNumero(mesTexto)
+    Else
+        mesFiltro = 0
+    End If
+    On Error GoTo 0
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents  = False
+
+    On Error GoTo FIN
+
+    Dim cntPN As Long, cntPJ As Long
+    cntPN = ExportarTipo(wb, lo, "N", "Muestra_Contratos_PN", celdaPN, anioFiltro, mesFiltro)
+    cntPJ = ExportarTipo(wb, lo, "J", "Muestra_Contratos_PJ", celdaPJ, anioFiltro, mesFiltro)
+
     MsgBox "Exportación completada." & vbCrLf & _
            "PN: " & cntPN & " fila(s)." & vbCrLf & _
            "PJ: " & cntPJ & " fila(s).", vbInformation
 
-Salir:
+FIN:
+    Application.EnableEvents  = True
     Application.ScreenUpdating = True
-    Exit Sub
-
-ErrHandler:
-    MsgBox "Error: " & Err.Number & " - " & Err.Description, vbCritical
-    Resume Salir
 End Sub
 
-'---------------------------------------------------
-Private Sub ExportFiltered(tbl As ListObject, tipo As String, hojaDestino As String, tamaño As Long)
-    Dim wb As Workbook: Set wb = ThisWorkbook
-    Dim wsDest As Worksheet
-    Dim tipoCol As Long, fechaCol As Long
-    Dim db As Range
-    Dim rowList() As Range
-    Dim k As Long, destRow As Long, i As Long
-    Dim wsMuestra As Worksheet
-    Dim mesFiltro As String, añoFiltro As Long, tipoInforme As String
-    Dim fechaVal As Date, fechaTexto As String
-    Dim mesNumFiltro As Long
-    
-    ' Leer parámetros de filtros
-    Set wsMuestra = wb.Worksheets("Muestra")
-    mesFiltro = Trim(wsMuestra.Range("Mes").Value)
-    añoFiltro = CLng(wsMuestra.Range("Año").Value)
-    tipoInforme = Trim(wsMuestra.Range("TipoInforme").Value)
-    mesNumFiltro = MonthNumberFromName(mesFiltro)
-    
-    ' Crear/limpiar hoja destino
-    On Error Resume Next
-    Set wsDest = wb.Worksheets(hojaDestino)
-    On Error GoTo 0
-    If wsDest Is Nothing Then
-        Set wsDest = wb.Worksheets.Add(After:=wb.Worksheets(wb.Worksheets.Count))
-        wsDest.name = hojaDestino
-    Else
-        wsDest.Cells.Clear
-    End If
-    wsDest.Visible = xlSheetVeryHidden
-    
-    ' Copiar encabezado
-    tbl.HeaderRowRange.Copy
-    wsDest.Range("A1").PasteSpecial xlPasteAll
-    Application.CutCopyMode = False
-    destRow = 2
-    
-    ' Columnas
-    tipoCol = GetListColumnIndex(tbl, "Tipo")
-    fechaCol = GetListColumnIndex(tbl, "Fecha de Ingreso")
-    Set db = tbl.DataBodyRange
-    
-    ' Construir lista de filas que cumplen filtros
-    k = 0
+' ============================================================
+'  Exporta filas para un tipo (N o J) usando los números
+'  aleatorios como índices dentro del universo filtrado.
+'  Devuelve la cantidad de filas exportadas.
+' ============================================================
+Private Function ExportarTipo(wb As Workbook, lo As ListObject, _
+                               ByVal inicial As String, _
+                               ByVal hojaDestino As String, _
+                               celdaInicio As Range, _
+                               ByVal anioFiltro As Long, _
+                               ByVal mesFiltro As Long) As Long
+    Dim fechaCol As Long, tipoCol As Long
+    fechaCol = ColIdx(lo, "Fecha")
+    tipoCol  = ColIdx(lo, "Tipo Persona")
+    If fechaCol = 0 Or tipoCol = 0 Then Exit Function
+
+    ' 1) Construir índices de filas del universo filtrado (mismo orden que la tabla)
+    Dim db As Range: Set db = lo.DataBodyRange
+    Dim universoIdx() As Long
+    ReDim universoIdx(1 To db.Rows.Count)
+    Dim n As Long: n = 0
+    Dim i As Long, fechaVal As Variant, tipoVal As String
+
     For i = 1 To db.Rows.Count
-        If CStr(db.Cells(i, tipoCol).Value) = tipo Then
-            fechaTexto = Trim(CStr(db.Cells(i, fechaCol).Value))
-            If Len(fechaTexto) >= 7 Then
-                On Error Resume Next
-                fechaVal = DateValue(Left(fechaTexto, 2) & "-" & Mid(fechaTexto, 3, 3) & "-20" & Right(fechaTexto, 2))
-                On Error GoTo 0
-                If Year(fechaVal) = añoFiltro Then
-                    If UCase(tipoInforme) = "ANUAL" Or _
-                       (UCase(tipoInforme) = "MENSUAL" And Month(fechaVal) = mesNumFiltro) Then
-                        k = k + 1
-                        ReDim Preserve rowList(1 To k)
-                        Set rowList(k) = db.Rows(i)
-                        If k >= tamaño Then Exit For ' limitar al tamaño exacto
+        fechaVal = db.Cells(i, fechaCol).Value
+        If IsDate(fechaVal) Then
+            If Year(fechaVal) = anioFiltro Then
+                If mesFiltro = 0 Or Month(fechaVal) = mesFiltro Then
+                    tipoVal = Trim$(CStr(db.Cells(i, tipoCol).Value))
+                    If UCase$(Left$(tipoVal, 1)) = UCase$(inicial) Then
+                        n = n + 1
+                        universoIdx(n) = i
                     End If
                 End If
             End If
         End If
     Next i
-    
-    ' Copiar filas
-    For i = 1 To k
-        rowList(i).Copy
-        wsDest.Cells(destRow, 1).PasteSpecial xlPasteAll
-        Application.CutCopyMode = False
-        destRow = destRow + 1
-    Next i
-    
-    ' Crear tabla
-    If k > 0 Then
-        On Error Resume Next
-        wsDest.ListObjects(hojaDestino).Delete
-        On Error GoTo 0
-        Dim lo As ListObject
-        Set lo = wsDest.ListObjects.Add(xlSrcRange, wsDest.Range("A1").CurrentRegion, , xlYes)
-        lo.name = hojaDestino
-    End If
-    
-    wsDest.Cells.EntireColumn.AutoFit
-    wsDest.Rows.RowHeight = wsDest.StandardHeight
-    wsDest.Visible = xlSheetVisible
-End Sub
 
-'---------------------------------------------------
-Private Function GetListColumnIndex(lo As ListObject, colName As String) As Long
+    If n = 0 Then Exit Function
+
+    ' 2) Leer números de muestra desde la grilla (5 columnas, hacia abajo)
+    Dim nums() As Long
+    nums = LeerNumerosGrilla(celdaInicio, 5)
+    If UBound(nums) = 0 Then Exit Function
+
+    ' 3) Mapear número → índice real en la tabla
+    Dim selIdx() As Long, k As Long, c As Long
+    ReDim selIdx(1 To UBound(nums))
+    k = 0
+    For c = 1 To UBound(nums)
+        If nums(c) >= 1 And nums(c) <= n Then
+            k = k + 1
+            selIdx(k) = universoIdx(nums(c))
+        End If
+    Next c
+    If k = 0 Then Exit Function
+    ReDim Preserve selIdx(1 To k)
+
+    ' 4) Crear/limpiar hoja destino
+    Dim wsDest As Worksheet
+    On Error Resume Next
+    Application.DisplayAlerts = False
+    Set wsDest = wb.Worksheets(hojaDestino)
+    If Not wsDest Is Nothing Then wsDest.Delete
+    Set wsDest = Nothing
+    Application.DisplayAlerts = True
+    On Error GoTo 0
+    Set wsDest = wb.Worksheets.Add(After:=wb.Worksheets(wb.Worksheets.Count))
+    wsDest.Name = hojaDestino
+
+    ' 5) Encabezados
+    lo.HeaderRowRange.Copy
+    wsDest.Range("A1").PasteSpecial xlPasteAll
+    Application.CutCopyMode = False
+
+    ' 6) Filas seleccionadas
+    Dim dstRow As Long: dstRow = 2
+    For c = 1 To k
+        db.Rows(selIdx(c)).Copy
+        wsDest.Cells(dstRow, 1).PasteSpecial xlPasteAll
+        Application.CutCopyMode = False
+        dstRow = dstRow + 1
+    Next c
+
+    ' 7) Crear tabla y autofit
+    Dim loT As ListObject
+    Set loT = wsDest.ListObjects.Add(xlSrcRange, wsDest.Range("A1").CurrentRegion, , xlYes)
+    loT.Name = hojaDestino
+    On Error Resume Next
+    loT.TableStyle = "TableStyleLight9"
+    On Error GoTo 0
+    loT.Range.Columns.AutoFit
+
+    ' Columna Fecha: formatear como fecha
+    Dim cF As Long: cF = ColIdx(loT, "Fecha")
+    If cF > 0 Then loT.ListColumns(cF).DataBodyRange.NumberFormatLocal = "dd/mm/aaaa"
+
+    ExportarTipo = k
+End Function
+
+' ============================================================
+'  Lee números de una grilla de nCols columnas hacia abajo.
+' ============================================================
+Private Function LeerNumerosGrilla(startCell As Range, ByVal nCols As Long) As Long()
+    Dim nums() As Long, cap As Long
+    cap = 0
+    ReDim nums(0 To 0)
+    Dim R As Long, c As Long, v As Variant, filaVacia As Boolean
+    R = 0
+    Do
+        filaVacia = True
+        For c = 0 To nCols - 1
+            v = startCell.Offset(R, c).Value
+            If Len(CStr(v)) > 0 Then
+                filaVacia = False
+                If IsNumeric(v) Then
+                    cap = cap + 1
+                    ReDim Preserve nums(0 To cap)
+                    nums(cap) = CLng(v)
+                End If
+            End If
+        Next c
+        If filaVacia Then Exit Do
+        R = R + 1
+    Loop
+    LeerNumerosGrilla = nums
+End Function
+
+' ============================================================
+'  HELPERS (duplicados de mod3 para que el módulo sea autónomo)
+' ============================================================
+
+Private Function ColIdx(lo As ListObject, ByVal colName As String) As Long
     Dim i As Long
     For i = 1 To lo.ListColumns.Count
-        If StrComp(lo.ListColumns(i).name, colName, vbTextCompare) = 0 Then
-            GetListColumnIndex = i
-            Exit Function
+        If StrComp(lo.ListColumns(i).Name, colName, vbTextCompare) = 0 Then
+            ColIdx = i: Exit Function
         End If
     Next i
-    GetListColumnIndex = 0
+    Dim low As String: low = LCase$(colName)
+    For i = 1 To lo.ListColumns.Count
+        If InStr(LCase$(lo.ListColumns(i).Name), low) > 0 Then
+            ColIdx = i: Exit Function
+        End If
+    Next i
+    ColIdx = 0
 End Function
 
-'---------------------------------------------------
-Private Function MonthNumberFromName(mes As String) As Long
-    Select Case UCase(Trim(mes))
-        Case "ENERO": MonthNumberFromName = 1
-        Case "FEBRERO": MonthNumberFromName = 2
-        Case "MARZO": MonthNumberFromName = 3
-        Case "ABRIL": MonthNumberFromName = 4
-        Case "MAYO": MonthNumberFromName = 5
-        Case "JUNIO": MonthNumberFromName = 6
-        Case "JULIO": MonthNumberFromName = 7
-        Case "AGOSTO": MonthNumberFromName = 8
-        Case "SEPTIEMBRE": MonthNumberFromName = 9
-        Case "OCTUBRE": MonthNumberFromName = 10
-        Case "NOVIEMBRE": MonthNumberFromName = 11
-        Case "DICIEMBRE": MonthNumberFromName = 12
-        Case Else: MonthNumberFromName = 0
+Private Function MesNumero(ByVal s As String) As Long
+    Select Case UCase$(Left$(Trim$(s) & "   ", 3))
+        Case "ENE": MesNumero = 1
+        Case "FEB": MesNumero = 2
+        Case "MAR": MesNumero = 3
+        Case "ABR": MesNumero = 4
+        Case "MAY": MesNumero = 5
+        Case "JUN": MesNumero = 6
+        Case "JUL": MesNumero = 7
+        Case "AGO": MesNumero = 8
+        Case "SEP", "SET": MesNumero = 9
+        Case "OCT": MesNumero = 10
+        Case "NOV": MesNumero = 11
+        Case "DIC": MesNumero = 12
+        Case Else:  MesNumero = 0
     End Select
 End Function
-

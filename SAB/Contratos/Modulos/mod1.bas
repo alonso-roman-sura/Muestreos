@@ -1,39 +1,45 @@
+' ========== mod1.bas  (SeleccionMuestra) ==========
 Option Explicit
 
-Sub SeleccionMuestra()
+' ============================================================
+'  ENTRADA DEL BOTÓN "Seleccionar Muestras"
+' ============================================================
+Public Sub SeleccionMuestra()
     Dim resp As VbMsgBoxResult
-    resp = MsgBox("¿Está seguro de que desea generar nuevas muestras PN y PJ?", vbYesNo + vbQuestion, "Confirmar")
+    resp = MsgBox("¿Está seguro de que desea generar nuevas muestras PN y PJ?", _
+                  vbYesNo + vbQuestion, "Confirmar")
     If resp <> vbYes Then Exit Sub
-    
+
     Application.ScreenUpdating = False
-    Application.Calculation = xlCalculationManual
-    
-    ' PN
-    GenerarMuestraOrdenada "Muestra1_PN", "TamañoMuestraPN", "UniversoPN"
-    ' PJ
-    GenerarMuestraOrdenada "Muestra1_PJ", "TamañoMuestraPJ", "UniversoPJ"
-    
-    Application.Calculation = xlCalculationAutomatic
-    Application.ScreenUpdating = True
-    
+    Application.Calculation    = xlCalculationManual
+    Application.EnableEvents   = False
+
+    On Error GoTo FIN
+
+    GenerarMuestra "Muestra1_PN", "TamañoMuestraPN", "UniversoPN"
+    GenerarMuestra "Muestra1_PJ", "TamañoMuestraPJ", "UniversoPJ"
+
     MsgBox "Muestras PN y PJ generadas correctamente.", vbInformation
+
+FIN:
+    Application.EnableEvents   = True
+    Application.Calculation    = xlCalculationAutomatic
+    Application.ScreenUpdating = True
 End Sub
 
-Private Sub GenerarMuestraOrdenada(nombreInicio As String, nombreTamano As String, nombreUniverso As String)
+' ============================================================
+'  GENERA UNA MUESTRA para el nombre de inicio dado
+' ============================================================
+Private Sub GenerarMuestra(ByVal nombreInicio As String, _
+                             ByVal nombreTamano As String, _
+                             ByVal nombreUniverso As String)
     Dim wb As Workbook: Set wb = ThisWorkbook
-    Dim rngInicio As Range
     Dim ws As Worksheet
+    Dim rngInicio As Range
     Dim tamano As Long, universo As Long
-    Dim coll As Collection
-    Dim numeros() As Long
-    Dim i As Long, j As Long, tmp As Long
-    Dim startRow As Long, startCol As Long
-    Dim lastRowUsed As Long, lastColUsed As Long
-    Dim c As Long, r As Long
-    Dim rnum As Long
-    Dim fila As Long, col As Long
-    
-    ' Obtener la celda de inicio (plantilla)
+    Dim nums() As Long
+
+    ' Resolver celda de inicio
     On Error Resume Next
     Set rngInicio = wb.Names(nombreInicio).RefersToRange
     On Error GoTo 0
@@ -41,14 +47,14 @@ Private Sub GenerarMuestraOrdenada(nombreInicio As String, nombreTamano As Strin
         MsgBox "No existe el nombre definido '" & nombreInicio & "'.", vbCritical
         Exit Sub
     End If
-    Set ws = rngInicio.Parent   ' ? hoja donde está la muestra
-    
+    Set ws = rngInicio.Parent
+
     ' Leer tamaño y universo
     On Error Resume Next
-    tamano = CLng(wb.Names(nombreTamano).RefersToRange.Value)
+    tamano   = CLng(wb.Names(nombreTamano).RefersToRange.Value)
     universo = CLng(wb.Names(nombreUniverso).RefersToRange.Value)
     On Error GoTo 0
-    
+
     If tamano <= 0 Or universo <= 0 Then
         MsgBox "Los valores de '" & nombreTamano & "' y '" & nombreUniverso & "' deben ser > 0.", vbExclamation
         Exit Sub
@@ -57,70 +63,83 @@ Private Sub GenerarMuestraOrdenada(nombreInicio As String, nombreTamano As Strin
         MsgBox "'" & nombreTamano & "' no puede ser mayor que '" & nombreUniverso & "'.", vbExclamation
         Exit Sub
     End If
-    
-    startRow = rngInicio.Row
-    startCol = rngInicio.Column
-    
-    ' Determinar el área usada anteriormente dentro del bloque de 5 columnas
-    lastColUsed = startCol + 4
-    lastRowUsed = startRow
-    For c = startCol To lastColUsed
-        r = ws.Cells(ws.Rows.Count, c).End(xlUp).Row
-        If r > lastRowUsed Then lastRowUsed = r
+
+    ' Limpiar bloque previo
+    LimpiarBloque ws, rngInicio, 5
+
+    ' Generar números únicos y ordenados
+    nums = UniqueSortedSample(universo, tamano)
+
+    ' Escribir con formato (borde punteado + centrado)
+    WriteGrid ws, rngInicio, nums, 5
+End Sub
+
+' ============================================================
+'  HELPERS
+' ============================================================
+
+Private Sub LimpiarBloque(ws As Worksheet, startCell As Range, ByVal nCols As Long)
+    Dim c As Long, lastRow As Long, lr As Long
+    lastRow = startCell.Row
+    For c = 0 To nCols - 1
+        lr = ws.Cells(ws.Rows.Count, startCell.Column + c).End(xlUp).Row
+        If lr > lastRow Then lastRow = lr
     Next c
-    If lastRowUsed < startRow Then lastRowUsed = startRow
-    
-    ' Limpiar contenidos previos (preservando formato de la celda plantilla)
-    With ws
-        .Range(.Cells(startRow, startCol), .Cells(lastRowUsed, lastColUsed)).ClearContents
-        ' borrar formatos a la derecha de la plantilla
-        If lastColUsed > startCol Then
-            .Range(.Cells(startRow, startCol + 1), .Cells(lastRowUsed, lastColUsed)).ClearFormats
-        End If
-        ' borrar formatos debajo de la plantilla en su misma columna
-        If lastRowUsed > startRow Then
-            .Range(.Cells(startRow + 1, startCol), .Cells(lastRowUsed, startCol)).ClearFormats
-        End If
-        rngInicio.ClearContents   ' la plantilla pierde valor, conserva formato
-    End With
-    
-    ' Generar números aleatorios ÚNICOS
-    Set coll = New Collection
+    If lastRow < startCell.Row Then Exit Sub
+    ws.Range(startCell, ws.Cells(lastRow, startCell.Column + nCols - 1)).Clear
+End Sub
+
+' Muestra aleatoria de {1..universo} sin repetición, ordenada ascendente.
+Private Function UniqueSortedSample(ByVal universo As Long, ByVal tamano As Long) As Long()
+    Dim coll As Collection: Set coll = New Collection
+    Dim rnum As Long, i As Long, j As Long, tmp As Long
+    Dim v() As Long
     Randomize
     Do While coll.Count < tamano
         rnum = Int(universo * Rnd) + 1
         On Error Resume Next
-        coll.Add rnum, CStr(rnum)   ' key = número -> evita duplicados
+        coll.Add rnum, CStr(rnum)
         On Error GoTo 0
     Loop
-    
-    ' Pasar a array y ordenar ascendente (menor primero)
-    ReDim numeros(1 To coll.Count)
-    For i = 1 To coll.Count
-        numeros(i) = coll(i)
-    Next i
-    For i = 1 To UBound(numeros) - 1
-        For j = i + 1 To UBound(numeros)
-            If numeros(i) > numeros(j) Then
-                tmp = numeros(i): numeros(i) = numeros(j): numeros(j) = tmp
-            End If
+    ReDim v(1 To coll.Count)
+    For i = 1 To coll.Count: v(i) = coll(i): Next i
+    For i = 1 To UBound(v) - 1
+        For j = i + 1 To UBound(v)
+            If v(i) > v(j) Then tmp = v(i): v(i) = v(j): v(j) = tmp
         Next j
     Next i
-    
-    ' Escribir en 5 columnas de ancho y luego hacia abajo, copiando formato de la plantilla
-    fila = startRow
-    col = startCol
-    For i = 1 To UBound(numeros)
-        ws.Cells(fila, col).Value = numeros(i)
-        rngInicio.Copy
-        ws.Cells(fila, col).PasteSpecial Paste:=xlPasteFormats
+    UniqueSortedSample = v
+End Function
+
+' Escribe el array en grilla de nCols columnas.
+' Aplica borde punteado gris en los 4 lados y alineación centrada.
+Private Sub WriteGrid(ws As Worksheet, startCell As Range, _
+                       ByRef v() As Long, ByVal nCols As Long)
+    Dim i As Long, R As Long, c As Long, cel As Range, b As Long
+    R = startCell.Row: c = startCell.Column
+    For i = LBound(v) To UBound(v)
+        Set cel = ws.Cells(R, c)
+        cel.Value = v(i)
+        cel.HorizontalAlignment = xlCenter
+
+        ' Copiar formato de la celda plantilla (startCell)
+        startCell.Copy
+        cel.PasteSpecial Paste:=xlPasteFormats
         Application.CutCopyMode = False
-        
-        col = col + 1
-        If col > startCol + 4 Then
-            col = startCol
-            fila = fila + 1
+
+        ' Borde punteado gris en los 4 lados
+        For b = xlEdgeLeft To xlEdgeRight   ' 7, 8, 9, 10
+            With cel.Borders(b)
+                .LineStyle = xlDot
+                .Weight    = xlThin
+                .Color     = RGB(128, 128, 128)
+            End With
+        Next b
+
+        c = c + 1
+        If c > startCell.Column + (nCols - 1) Then
+            c = startCell.Column
+            R = R + 1
         End If
     Next i
 End Sub
-
