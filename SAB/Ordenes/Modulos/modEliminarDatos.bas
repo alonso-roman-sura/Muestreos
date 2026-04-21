@@ -312,5 +312,3 @@ Private Sub LimpiarBloqueInicioMuestra(ws As Worksheet)
     On Error GoTo 0
     rng.Clear
 End Sub
-
-

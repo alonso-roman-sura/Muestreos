@@ -330,4 +330,3 @@ Private Function M_Ordenes_PQ_Spanish(ByVal ruta As String) As String
 
     M_Ordenes_PQ_Spanish = m
 End Function
-

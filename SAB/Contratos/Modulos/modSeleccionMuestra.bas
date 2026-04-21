@@ -143,5 +143,3 @@ Private Sub WriteGrid(ws As Worksheet, startCell As Range, _
         End If
     Next i
 End Sub
-
-

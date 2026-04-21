@@ -59,4 +59,3 @@ Public Function GetMuestrasEndRow(ws As Worksheet, ByVal defaultRow As Long) As 
         GetMuestrasEndRow = nm.RefersToRange.Row
     End If
 End Function
-

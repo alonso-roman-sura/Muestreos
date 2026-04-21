@@ -307,5 +307,3 @@ Private Sub QuickSortKeys(ByRef key() As Double, ByRef idx() As Long, ByVal L As
     If L < j Then QuickSortKeys key, idx, L, j
     If i < R Then QuickSortKeys key, idx, i, R
 End Sub
-
-

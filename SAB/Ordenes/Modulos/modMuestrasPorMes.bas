@@ -189,5 +189,3 @@ Private Function MesAbrevES(ByVal m As Long) As String
         Case Else: MesAbrevES = "Mes"
     End Select
 End Function
-
-

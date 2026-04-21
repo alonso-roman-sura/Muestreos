@@ -175,5 +175,3 @@ Private Sub LimpiarGrillaMuestra(ByVal nmNombre As String, ByVal nCols As Long)
     On Error GoTo 0
     rng.Clear
 End Sub
-
-
